@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Equation Driven Curve - Help</title>
+<style>
+  body { font: 15px/1.5 -apple-system, "Segoe UI", Arial, sans-serif; max-width: 820px; margin: 24px auto; padding: 0 16px; color: #222; background: #fff; }
+  h1 { font-size: 24px; } h2 { font-size: 18px; margin-top: 28px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  code, td.eq { font-family: Consolas, Menlo, monospace; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #f4f6f8; }
+</style>
+</head>
+<body>
+<h1>Equation Driven Curve</h1>
+<p>Creates a 3D fitted spline in the <b>active sketch</b> from parametric equations of <code>t</code>.
+Open a sketch, then choose <b>Sketch &gt; Create &gt; Equation Driven Curve</b>.</p>
+
+<h2>Dialog</h2>
+<table>
+<tr><th>Option</th><th>Meaning</th></tr>
+<tr><td>Coordinate System</td><td>Cartesian, Cylindrical or Spherical. Each system keeps its own equations.</td></tr>
+<tr><td>Cartesian</td><td><code>x(t)</code>, <code>y(t)</code>, <code>z(t)</code></td></tr>
+<tr><td>Cylindrical</td><td><code>r(t)</code> radius from the sketch Z axis, <code>&theta;(t)</code> angle from +X in the XY plane, <code>z(t)</code> height.<br>x = r&middot;cos &theta;, y = r&middot;sin &theta;</td></tr>
+<tr><td>Spherical</td><td><code>r(t)</code> distance from origin, <code>&theta;(t)</code> polar angle from +Z, <code>&phi;(t)</code> azimuth from +X.<br>x = r&middot;sin &theta;&middot;cos &phi;, y = r&middot;sin &theta;&middot;sin &phi;, z = r&middot;cos &theta;</td></tr>
+<tr><td>Starting / Ending t value</td><td>Range of the parameter <code>t</code>. Ending must be greater than starting. Fusion expressions are allowed (e.g. <code>2 * PI</code>).</td></tr>
+<tr><td>Notifications</td><td>Number of spline control (fit) points that will be created, or the error in your equations.</td></tr>
+</table>
+<p>Coordinates are in the sketch's own coordinate system. Lengths use the document's default length unit
+(the one shown in the browser's <i>Units</i> node). Angles are in <b>radians</b>. A curve that ends where it starts is made a closed spline.</p>
+
+<h2>Expression syntax (muparser compatible)</h2>
+<ul>
+<li>Variable: <code>t</code>. Constants: <code>pi</code> (also <code>_pi</code>), <code>e</code> (also <code>_e</code>). Names are <b>case-sensitive</b>.</li>
+<li>Operators: <code>+ - * /</code>, power <code>^</code> (or <code>**</code>), comparisons <code>== != &lt; &gt; &lt;= &gt;=</code>, logic <code>&amp;&amp; ||</code>, if-else <code>cond ? a : b</code>.</li>
+<li>Multiplication must be written: <code>2*t</code>, not <code>2t</code>.</li>
+</ul>
+<table>
+<tr><th>Functions</th></tr>
+<tr><td class="eq">sin cos tan asin acos atan atan2(y,x) sinh cosh tanh asinh acosh atanh sec csc cot</td></tr>
+<tr><td class="eq">sqrt exp ln log (natural) log10 log2 pow(a,b) hypot(a,b)</td></tr>
+<tr><td class="eq">abs sign rint floor ceil mod(a,b) min(...) max(...) sum(...) avg(...) deg(x) rad(x)</td></tr>
+</table>
+
+<h2>Examples</h2>
+<table>
+<tr><th>Curve</th><th>System</th><th>Equations</th><th>t range</th></tr>
+<tr><td>Archimedes' spiral</td><td>Cartesian</td><td class="eq">x = t * cos(2 * pi * t)<br>y = t * sin(2 * pi * t)<br>z = 0</td><td>0 to 3</td></tr>
+<tr><td>Archimedes' spiral</td><td>Cylindrical</td><td class="eq">r = t<br>&theta; = 2 * pi * t<br>z = 0</td><td>0 to 3</td></tr>
+<tr><td>Helix (r 10, pitch 5)</td><td>Cylindrical</td><td class="eq">r = 10<br>&theta; = 2 * pi * t<br>z = 5 * t</td><td>0 to 6</td></tr>
+<tr><td>Cycloid</td><td>Cartesian</td><td class="eq">x = 5 * (t - sin(t))<br>y = 5 * (1 - cos(t))<br>z = 0</td><td>0 to 6 * PI</td></tr>
+<tr><td>Conical spiral</td><td>Cylindrical</td><td class="eq">r = 2 * t<br>&theta; = 2 * pi * t<br>z = 4 * t</td><td>0 to 5</td></tr>
+<tr><td>Spherical spiral</td><td>Spherical</td><td class="eq">r = 3<br>&theta; = pi * t / 3<br>&phi; = 4 * pi * t</td><td>0 to 3</td></tr>
+<tr><td>Sine wave</td><td>Cartesian</td><td class="eq">x = t<br>y = 5 * sin(2 * pi * t / 20)<br>z = 0</td><td>0 to 40</td></tr>
+<tr><td>Involute of a circle (r 10)</td><td>Cartesian</td><td class="eq">x = 10 * (cos(t) + t * sin(t))<br>y = 10 * (sin(t) - t * cos(t))<br>z = 0</td><td>0 to 1.2</td></tr>
+<tr><td>Trefoil knot</td><td>Cartesian</td><td class="eq">x = sin(t) + 2 * sin(2 * t)<br>y = cos(t) - 2 * cos(2 * t)<br>z = -sin(3 * t)</td><td>0 to 2 * PI</td></tr>
+<tr><td>Rose (4 petals)</td><td>Cylindrical</td><td class="eq">r = 10 * cos(2 * t)<br>&theta; = t<br>z = 0</td><td>0 to 2 * PI</td></tr>
+</table>
+<p>Inspired by the Code Reclaimers Equation Driven Curve add-in.</p>
+</body>
+</html>

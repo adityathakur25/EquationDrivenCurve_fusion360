@@ -1,0 +1,13 @@
+{
+	"autodeskProduct": "Fusion",
+	"type": "addin",
+	"id": "6f3b8f0e-6c55-4d0a-9a3f-2f7c1e1d5a42",
+	"author": "Anaay Sahu",
+	"description": {
+		"": "Equation Driven Curve - create 3D sketch splines from parametric equations in Cartesian, Cylindrical or Spherical coordinates."
+	},
+	"version": "1.0.0",
+	"runOnStartup": true,
+	"supportedOS": "windows|mac",
+	"editEnabled": true
+}
