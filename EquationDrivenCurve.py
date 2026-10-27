@@ -19,6 +19,10 @@ except ImportError:
         sys.path.insert(0, _HERE)
     import edc_core as core
 
+# fusion keeps submodules cached between stop/run, so force a fresh copy
+import importlib
+importlib.reload(core)
+
 CMD_ID = 'asahu_EquationDrivenCurve'
 CMD_NAME = 'Equation Driven Curve'
 CMD_TOOLTIP = 'Create a 3D curve in the active sketch from parametric equations x(t), y(t), z(t).'

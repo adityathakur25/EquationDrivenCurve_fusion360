@@ -34,6 +34,8 @@ FUNCTIONS = {
     'min': (min, 1, None), 'max': (max, 1, None),
     'sum': (lambda *a: math.fsum(a), 1, None), 'avg': (_avg, 1, None),
     # extras
+    'arcsin': (math.asin, 1, 1), 'arccos': (math.acos, 1, 1), 'arctan': (math.atan, 1, 1),
+    'arctan2': (math.atan2, 2, 2),  # solidworks style names
     'atan2': (math.atan2, 2, 2), 'pow': (math.pow, 2, 2), 'hypot': (math.hypot, 2, 2),
     'floor': (lambda x: float(math.floor(x)), 1, 1),
     'ceil': (lambda x: float(math.ceil(x)), 1, 1),
