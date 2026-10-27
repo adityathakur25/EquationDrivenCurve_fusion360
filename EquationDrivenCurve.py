@@ -45,11 +45,19 @@ _handlers = []  # handlers get garbage collected otherwise
 
 # settings
 
+EXACT = 'Exact (fixed spline)'
+FITTED = 'Fit points (editable)'
+SPLINE_TYPES = (EXACT, FITTED)
+FIT_POINT_LIMIT = 300   # fusion slows down a lot past a few hundred fit points
+
 _DEFAULT_SETTINGS = {
     'coordSystem': core.CARTESIAN,
     'equations': {cs: list(core.DEFAULT_EQUATIONS[cs]) for cs in core.COORD_SYSTEMS},
     'tStart': '0',
     'tEnd': '3',
+    'splineType': EXACT,
+    'accuracy': '0.005 mm',
+    'maxSegments': 2000,
 }
 
 
@@ -64,9 +72,13 @@ def _load_settings():
             eq = data.get('equations', {}).get(cs)
             if isinstance(eq, list) and len(eq) == 3 and all(isinstance(e, str) for e in eq):
                 s['equations'][cs] = eq
-        for k in ('tStart', 'tEnd'):
+        for k in ('tStart', 'tEnd', 'accuracy'):
             if isinstance(data.get(k), str) and data[k].strip():
                 s[k] = data[k]
+        if data.get('splineType') in SPLINE_TYPES:
+            s['splineType'] = data['splineType']
+        if isinstance(data.get('maxSegments'), int) and 10 <= data['maxSegments'] <= 20000:
+            s['maxSegments'] = data['maxSegments']
     except Exception:
         pass
     return s
@@ -90,28 +102,36 @@ def _active_sketch():
     return adsk.fusion.Sketch.cast(_app.activeEditObject)
 
 
-def _length_factor():
-    # fusion works in cm internally
+def _units():
+    # (document length unit name, factor from that unit to fusion's internal cm)
     design = adsk.fusion.Design.cast(_app.activeProduct)
     if not design:
-        return 1.0
+        return 'cm', 1.0
     um = design.fusionUnitsManager
     try:
-        return um.convert(1.0, um.defaultLengthUnits, 'cm')
+        return um.defaultLengthUnits, um.convert(1.0, um.defaultLengthUnits, 'cm')
     except Exception:
-        return 1.0
+        return 'cm', 1.0
 
 
 class _State:
-    # cache so validate/preview/execute don't all re-evaluate the same curve
-
+    # cache so validate/preview/execute don't all redo the same work
     def __init__(self):
-        self.cache_key = None
-        self.cache_result = None
-        self.cache_error = None
+        self.key = None
+        self.result = None
+        self.error = None
+        self.measured = None    # error measured on the spline fusion actually made
 
 
 _state = _State()
+
+
+class _Built:
+    def __init__(self, mode, data, closed, tol):
+        self.mode = mode        # EXACT or FITTED
+        self.data = data        # HermiteCurve or CurveResult
+        self.closed = closed
+        self.tol = tol          # in document units
 
 
 def _read_inputs(inputs):
@@ -121,43 +141,89 @@ def _read_inputs(inputs):
              for i in range(3)]
     t0_in = adsk.core.ValueCommandInput.cast(inputs.itemById('tStart'))
     t1_in = adsk.core.ValueCommandInput.cast(inputs.itemById('tEnd'))
-    return cs, exprs, t0_in, t1_in
+    st = adsk.core.DropDownCommandInput.cast(inputs.itemById('splineType'))
+    mode = st.selectedItem.name if st.selectedItem else EXACT
+    acc_in = adsk.core.ValueCommandInput.cast(inputs.itemById('accuracy'))
+    seg_in = adsk.core.IntegerSpinnerCommandInput.cast(inputs.itemById('maxSegments'))
+    return cs, exprs, t0_in, t1_in, mode, acc_in, seg_in
 
 
 def _evaluate(inputs):
-    cs, exprs, t0_in, t1_in = _read_inputs(inputs)
+    cs, exprs, t0_in, t1_in, mode, acc_in, seg_in = _read_inputs(inputs)
     if not t0_in.isValidExpression:
         return None, 'Starting t value is not a valid expression'
     if not t1_in.isValidExpression:
         return None, 'Ending t value is not a valid expression'
-    key = (cs, tuple(exprs), t0_in.value, t1_in.value)
-    if key == _state.cache_key:
-        return _state.cache_result, _state.cache_error
+    if not acc_in.isValidExpression or acc_in.value <= 0:
+        return None, 'Accuracy must be a length greater than 0'
+    unit, f = _units()
+    tol = acc_in.value / f                    # internal cm -> document units
+    max_seg = seg_in.value
+    key = (cs, tuple(exprs), t0_in.value, t1_in.value, mode, round(tol, 15), max_seg, f)
+    if key == _state.key:
+        return _state.result, _state.error
     try:
-        res, err = core.sample_curve(cs, exprs, t0_in.value, t1_in.value), None
+        if mode == EXACT:
+            res = core.sample_curve(cs, exprs, t0_in.value, t1_in.value,
+                                    max_points=max_seg, start_tol=tol * 100)
+            built = _Built(EXACT, core.hermite_fit(res, tol, max_seg), res.closed, tol)
+        else:
+            # fusion gets very slow with big fit point splines, so keep the count modest.
+            # a spline through these points is a lot closer than the polyline itself
+            res = core.sample_curve(cs, exprs, t0_in.value, t1_in.value,
+                                    max_points=min(max_seg, FIT_POINT_LIMIT),
+                                    start_tol=tol * 4)
+            built = _Built(FITTED, res, res.closed, tol)
+        built.func = res.func
+        built.truth = res.dense_points
+        built.t_range = (res.t_start, res.t_end)
+        result, err = built, None
     except core.ExprError as e:
-        res, err = None, str(e)
+        result, err = None, str(e)
     except Exception as e:
-        res, err = None, 'Error: %s' % e
-    _state.cache_key, _state.cache_result, _state.cache_error = key, res, err
-    return res, err
+        result, err = None, 'Error: %s' % e
+    _state.key, _state.result, _state.error, _state.measured = key, result, err, None
+    return result, err
+
+
+def _fmt_len(v, unit):
+    return '%.4g %s' % (v, unit)
 
 
 def _update_notification(inputs):
     box = adsk.core.TextBoxCommandInput.cast(inputs.itemById('notifications'))
     if not box:
         return
-    res, err = _evaluate(inputs)
+    built, err = _evaluate(inputs)
     if err:
         box.numRows = 3
         box.formattedText = '<span style="color:#d00000">%s</span>' % html.escape(err)
+        return
+    unit, _ = _units()
+    if built.mode == EXACT:
+        n = built.data.spans
+        msg = '%d segment%s' % (n, '' if n == 1 else 's')
     else:
-        n = len(res.points)
+        n = len(built.data.points)
         msg = '%d spline control%s' % (n, '' if n == 1 else 's')
-        if res.closed:
-            msg += ' (closed)'
-        box.numRows = 1
-        box.formattedText = msg
+    if built.closed:
+        msg += ' (closed)'
+    err_val = _state.measured
+    if err_val is None and built.mode == EXACT:
+        err_val = built.data.max_error
+    if err_val is not None:
+        line = 'max error %s' % _fmt_len(err_val, unit)
+        if err_val > built.tol:
+            hint = ('raise Max segments' if built.mode == EXACT
+                    else 'switch to Exact or loosen Accuracy')
+            line = '<span style="color:#d00000">%s, above accuracy (%s)</span>' % (line, hint)
+            box.numRows = 4
+        else:
+            box.numRows = 2
+        msg += '<br>' + line
+    else:
+        box.numRows = 2
+    box.formattedText = msg
 
 
 def _update_visibility(inputs):
@@ -168,31 +234,71 @@ def _update_visibility(inputs):
             inputs.itemById(_eq_id(cs, i)).isVisible = (cs == sel)
 
 
-def _create_curve(sketch, res):
-    f = _length_factor()
-    pts = adsk.core.ObjectCollection.create()
-    for x, y, z in res.points:
-        pts.add(adsk.core.Point3D.create(x * f, y * f, z * f))
+def _spline_points(curve, n, scale):
+    # n+1 points evenly spaced in parameter, back in document units
+    ev = curve.geometry.evaluator
+    ok, p0, p1 = ev.getParameterExtents()
+    params = [p0 + (p1 - p0) * i / n for i in range(n + 1)]
+    ok, pts = ev.getPointsAtParameters(params)
+    return params, p0, p1, [(p.x / scale, p.y / scale, p.z / scale) for p in pts]
+
+
+def _measure(curve, built, scale):
+    # check the curve fusion actually made against the equations
+    if built.mode == EXACT:
+        n = min(20000, max(4000, 12 * built.data.spans))
+        params, p0, p1, pts = _spline_points(curve, n, scale)
+        ta, tb = built.t_range
+        worst = 0.0
+        for u, q in zip(params, pts):
+            g = built.func(ta + (u - p0) / (p1 - p0) * (tb - ta))
+            d = core._dist(q, g)
+            if d > worst:
+                worst = d
+        return worst
+    n = min(30000, max(8000, 16 * len(built.data.points)))
+    _, _, _, pts = _spline_points(curve, n, scale)
+    worst, _ = core.deviation(built.truth, pts)
+    return worst
+
+
+def _create_curve(sketch, built):
+    _, f = _units()
     sketch.isComputeDeferred = True
     try:
-        spline = sketch.sketchCurves.sketchFittedSplines.add(pts)
-        if res.closed:
-            try:
-                spline.isClosed = True
-            except Exception:
-                pass
+        if built.mode == EXACT:
+            h = built.data
+            cps = [adsk.core.Point3D.create(x * f, y * f, z * f) for x, y, z in h.ctrl]
+            nurbs = adsk.core.NurbsCurve3D.createNonRational(cps, 3, h.knots(), False)
+            curve = sketch.sketchCurves.sketchFixedSplines.addByNurbsCurve(nurbs)
+        else:
+            pts = adsk.core.ObjectCollection.create()
+            fit = list(built.data.points)
+            if built.closed:
+                fit.append(fit[0])   # repeating the first point closes it, much faster than isClosed
+            for x, y, z in fit:
+                pts.add(adsk.core.Point3D.create(x * f, y * f, z * f))
+            curve = sketch.sketchCurves.sketchFittedSplines.add(pts)
     finally:
         sketch.isComputeDeferred = False
-    return spline
+    try:
+        _state.measured = _measure(curve, built, f)
+    except Exception:
+        _state.measured = None
+    return curve
 
 
 def _collect_settings(inputs):
     dd = adsk.core.DropDownCommandInput.cast(inputs.itemById('coordSystem'))
+    st = adsk.core.DropDownCommandInput.cast(inputs.itemById('splineType'))
     s = {
         'coordSystem': dd.selectedItem.name if dd.selectedItem else core.CARTESIAN,
         'equations': {},
         'tStart': adsk.core.ValueCommandInput.cast(inputs.itemById('tStart')).expression,
         'tEnd': adsk.core.ValueCommandInput.cast(inputs.itemById('tEnd')).expression,
+        'splineType': st.selectedItem.name if st.selectedItem else EXACT,
+        'accuracy': adsk.core.ValueCommandInput.cast(inputs.itemById('accuracy')).expression,
+        'maxSegments': adsk.core.IntegerSpinnerCommandInput.cast(inputs.itemById('maxSegments')).value,
     }
     for cs in core.COORD_SYSTEMS:
         s['equations'][cs] = [adsk.core.StringValueCommandInput.cast(
@@ -228,8 +334,8 @@ class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
                 pass
 
             try:
-                cmd.setDialogInitialSize(340, 330)
-                cmd.setDialogMinimumSize(300, 250)
+                cmd.setDialogInitialSize(360, 420)
+                cmd.setDialogMinimumSize(320, 300)
             except Exception:
                 pass
 
@@ -262,7 +368,28 @@ class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             if not t1.isValidExpression:
                 t1.expression = '3'
 
-            inputs.addTextBoxCommandInput('notifications', 'Notifications', '', 1, True)
+            st = inputs.addDropDownCommandInput('splineType', 'Spline Type',
+                                                adsk.core.DropDownStyles.TextListDropDownStyle)
+            for name in SPLINE_TYPES:
+                st.listItems.add(name, name == s['splineType'], '')
+            st.tooltip = 'How the curve is built'
+            st.tooltipDescription = ('Exact: cubic segments that follow the equations, split until '
+                                     'every part is within Accuracy. Not editable by fit points.\n'
+                                     'Fit points: a normal fit point spline you can edit later. '
+                                     'Accuracy is checked and shown but not guaranteed.')
+
+            unit, _ = _units()
+            acc = inputs.addValueInput('accuracy', 'Accuracy', unit,
+                                       adsk.core.ValueInput.createByString(s['accuracy']))
+            if not acc.isValidExpression:
+                acc.expression = '0.005 mm'
+            acc.tooltip = 'Largest allowed distance between the spline and the true curve'
+
+            seg = inputs.addIntegerSpinnerCommandInput('maxSegments', 'Max segments', 10, 20000, 100,
+                                                       s['maxSegments'])
+            seg.tooltip = 'Upper limit on segments (Exact) or fit points (Fit points, never more than %d)' % FIT_POINT_LIMIT
+
+            inputs.addTextBoxCommandInput('notifications', 'Notifications', '', 2, True)
             _update_notification(inputs)
 
             for event, handler in ((cmd.inputChanged, InputChangedHandler()),
@@ -312,11 +439,12 @@ class ExecutePreviewHandler(adsk.core.CommandEventHandler):
             sketch = _active_sketch()
             if not sketch or inputs.itemById('coordSystem') is None:
                 return
-            res, err = _evaluate(inputs)
-            _update_notification(inputs)
-            if res is None:
+            built, err = _evaluate(inputs)
+            if built is None:
+                _update_notification(inputs)
                 return
-            _create_curve(sketch, res)
+            _create_curve(sketch, built)
+            _update_notification(inputs)
             args.isValidResult = True  # reuse preview on OK
         except Exception:
             _report('Preview')
@@ -330,12 +458,12 @@ class ExecuteHandler(adsk.core.CommandEventHandler):
             sketch = _active_sketch()
             if not sketch or inputs.itemById('coordSystem') is None:
                 return
-            res, err = _evaluate(inputs)
-            if res is None:
+            built, err = _evaluate(inputs)
+            if built is None:
                 args.executeFailed = True
                 args.executeFailedMessage = err or 'Invalid input'
                 return
-            _create_curve(sketch, res)
+            _create_curve(sketch, built)
         except Exception:
             _report('Execute')
 

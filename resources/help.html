@@ -26,7 +26,10 @@ Open a sketch, then choose <b>Sketch &gt; Create &gt; Equation Driven Curve</b>.
 <tr><td>Cylindrical</td><td><code>r(t)</code> radius from the sketch Z axis, <code>&theta;(t)</code> angle from +X in the XY plane, <code>z(t)</code> height.<br>x = r&middot;cos &theta;, y = r&middot;sin &theta;</td></tr>
 <tr><td>Spherical</td><td><code>r(t)</code> distance from origin, <code>&theta;(t)</code> polar angle from +Z, <code>&phi;(t)</code> azimuth from +X.<br>x = r&middot;sin &theta;&middot;cos &phi;, y = r&middot;sin &theta;&middot;sin &phi;, z = r&middot;cos &theta;</td></tr>
 <tr><td>Starting / Ending t value</td><td>Range of the parameter <code>t</code>. Ending must be greater than starting. Fusion expressions are allowed (e.g. <code>2 * PI</code>).</td></tr>
-<tr><td>Notifications</td><td>Number of spline control (fit) points that will be created, or the error in your equations.</td></tr>
+<tr><td>Spline Type</td><td><b>Exact (fixed spline)</b>: cubic segments built from the equations and split until every part is within Accuracy. Error is guaranteed, not editable by fit points.<br><b>Fit points (editable)</b>: a normal fit point spline (max 300 points). Error is measured and shown, not guaranteed.</td></tr>
+<tr><td>Accuracy</td><td>Largest allowed distance between the spline and the real curve, e.g. <code>0.005 mm</code>.</td></tr>
+<tr><td>Max segments</td><td>Upper limit on segments (Exact) or fit points (Fit points).</td></tr>
+<tr><td>Notifications</td><td>Segment / fit point count and the max error measured on the spline Fusion created, or the error in your equations. Red if Accuracy wasn't reached.</td></tr>
 </table>
 <p>Coordinates are in the sketch's own coordinate system. Lengths use the document's default length unit
 (the one shown in the browser's <i>Units</i> node). Angles are in <b>radians</b>. A curve that ends where it starts is made a closed spline.</p>
